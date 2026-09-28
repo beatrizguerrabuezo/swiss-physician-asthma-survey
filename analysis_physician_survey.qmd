@@ -1,0 +1,579 @@
+---
+title: "Swiss Physician Asthma Survey  Analysis Code"
+format: html
+editor: source
+---
+
+# Overview
+
+This document contains the R code used for the main analyses reported in the manuscript on diagnostic practices for childhood asthma among Swiss physicians. Individual-level survey data are not included in the public repository to protect participant confidentiality.
+
+# 1. Setup
+
+```{r}
+library(here)
+library(tidyverse)
+library(gtsummary)
+library(broom)
+```
+
+# 2. Load analytical dataset
+
+```{r}
+# The analytical dataset is not publicly available.
+# The code assumes that data2.csv is stored in the project root directory.
+data2 <- read.csv(here::here("data2.csv"))
+```
+
+# 3. Define physician groups
+
+```{r}
+data2 <- data2 %>%
+  mutate(
+    primary_ped_spe_other = case_when(
+      phyq_q1_sp %in% c(1, 2) & physq_3_workplace == 1 ~ "Primary care paediatricians",
+      phyq_q1_sp %in% c(1, 2) & physq_3_workplace %in% c(2, 3) ~ "Hospital paediatricians",
+      phyq_q1_sp %in% c(3, 4, 13, 14) ~ "Paediatric specialists",
+      phyq_q1_sp %in% c(9, 10, 11, 12) ~ "Adult specialists",
+      phyq_q1_sp %in% c(5, 6, 7, 8) ~ "Other physicians",
+      TRUE ~ "Other physicians"
+    ),
+    primary_ped_spe_other = factor(
+      primary_ped_spe_other,
+      levels = c(
+        "Primary care paediatricians",
+        "Hospital paediatricians",
+        "Paediatric specialists",
+        "Adult specialists",
+        "Other physicians"
+      )
+    )
+  )
+```
+
+# 4. Create analysis variables
+
+```{r}
+data2 <- data2 %>%
+  mutate(
+    children_per_month = case_when(
+      phyq_q5_permonth == 2 ~ "1–5 children/month",
+      phyq_q5_permonth == 3 ~ "6–14 children/month",
+      phyq_q5_permonth == 4 ~ "15–29 children/month",
+      phyq_q5_permonth %in% c(5, 6, 7) ~ "≥30 children/month",
+      TRUE ~ NA_character_
+    ),
+    new_asthma = case_when(
+      phyq_q6_new.factor %in% c(
+        "≥ 30 neue Diagnosen/Monat",
+        "20-29 neue Diagnosen/Monat",
+        "10-19 neue Diagnosen/Monat"
+      ) ~ "≥10/month",
+      phyq_q6_new.factor == "4-9 neue Diagnosen/Monat" ~ "4–9/month",
+      phyq_q6_new.factor == "1-3 neue Diagnosen/Monat" ~ "1–3/month",
+      phyq_q6_new.factor == "Keine" ~ "None",
+      TRUE ~ NA_character_
+    ),
+    age_group_comb30 = case_when(
+      phyq_30_age %in% c(1, 2) ~ "Under 40 years",
+      phyq_30_age == 3 ~ "40–49 years",
+      phyq_30_age == 4 ~ "50–59 years",
+      phyq_30_age == 5 ~ "≥60 years",
+      phyq_30_age == 6 ~ "Prefer not to say",
+      TRUE ~ NA_character_
+    ),
+    workplace = case_when(
+      physq_3_workplace == 1 ~ "Practice",
+      physq_3_workplace == 2 ~ "Hospital",
+      physq_3_workplace == 3 ~ "Practice and hospital",
+      physq_3_workplace == 4 ~ "Neither",
+      TRUE ~ NA_character_
+    ),
+    phyq_q2_work = as.numeric(phyq_q2_work),
+    clinical_time_group = case_when(
+      phyq_q2_work >= 90 ~ "Full time",
+      phyq_q2_work < 90 ~ "Part-time",
+      TRUE ~ NA_character_
+    ),
+    swiss_2024 = case_when(
+      phyq_27_consult_guide == 1 & phyq_27_2_guide___1 == 1 ~ "Yes",
+      phyq_27_consult_guide == 1 & phyq_27_2_guide___1 == 0 ~ "No",
+      phyq_27_consult_guide == 0 ~ "No",
+      TRUE ~ NA_character_
+    ),
+    ers_2021 = case_when(
+      phyq_27_consult_guide == 1 & phyq_27_2_guide___3 == 1 ~ "Yes",
+      phyq_27_consult_guide == 1 & phyq_27_2_guide___3 == 0 ~ "No",
+      phyq_27_consult_guide == 0 ~ "No",
+      TRUE ~ NA_character_
+    ),
+    gina_2023 = case_when(
+      phyq_27_consult_guide == 1 & phyq_27_2_guide___4 == 1 ~ "Yes",
+      phyq_27_consult_guide == 1 & phyq_27_2_guide___4 == 0 ~ "No",
+      phyq_27_consult_guide == 0 ~ "No",
+      TRUE ~ NA_character_
+    )
+  )
+```
+
+# 5. Physician characteristics
+
+```{r}
+table1 <- data2 %>%
+  select(
+    primary_ped_spe_other,
+    phyq_28_lang.factor,
+    phyq_29_gender.factor,
+    age_group_comb30,
+    workplace,
+    clinical_time_group,
+    children_per_month,
+    new_asthma,
+    swiss_2024,
+    ers_2021,
+    gina_2023
+  ) %>%
+  tbl_summary(
+    by = primary_ped_spe_other,
+    statistic = all_categorical() ~ "{n} ({p}%)",
+    digits = all_categorical() ~ 0,
+    missing = "no"
+  ) %>%
+  add_ci(method = everything() ~ "wilson") %>%
+  modify_header(label ~ "**Characteristic**") %>%
+  bold_labels()
+
+table1
+```
+
+# 6. Availability and use of first-line diagnostic tests
+
+```{r}
+data2 <- data2 %>%
+  mutate(
+    spiro_use = case_when(
+      phyq_q7_2_spiro_often == 1 ~ "Use in almost all (>90%)",
+      phyq_q7_2_spiro_often == 2 ~ "Mostly used (>50%)",
+      phyq_q7_2_spiro_often %in% c(3, 4) ~ "Infrequently used (<50%)",
+      phyq_q7_2_spiro_often == 5 ~ "Available but never used",
+      phyq_q7_spiro == 1 ~ "Use but frequency missing",
+      phyq_q7_spiro == 0 ~ "Not available",
+      TRUE ~ NA_character_
+    ),
+    bdr_use = case_when(
+      phyq_q9_2_brd_often == 1 ~ "Use in almost all (>90%)",
+      phyq_q9_2_brd_often == 2 ~ "Mostly used (>50%)",
+      phyq_q9_2_brd_often %in% c(3, 4) ~ "Infrequently used (<50%)",
+      phyq_q9_2_brd_often == 5 ~ "Available but never used",
+      phyq_9_brd == 1 ~ "Use but frequency missing",
+      phyq_9_brd == 0 ~ "Not available",
+      TRUE ~ NA_character_
+    ),
+    feno_use = case_when(
+      phyq_11_4_feno_often == 1 ~ "Use in almost all (>90%)",
+      phyq_11_4_feno_often == 2 ~ "Mostly used (>50%)",
+      phyq_11_4_feno_often %in% c(3, 4) ~ "Infrequently used (<50%)",
+      phyq_11_4_feno_often == 5 ~ "Available but never used",
+      phyq_11_feno == 1 ~ "Use but frequency missing",
+      phyq_11_feno == 0 ~ "Not available",
+      TRUE ~ NA_character_
+    )
+  )
+
+first_line_table <- data2 %>%
+  select(primary_ped_spe_other, spiro_use, bdr_use, feno_use) %>%
+  tbl_summary(
+    by = primary_ped_spe_other,
+    statistic = all_categorical() ~ "{n} ({p}%)",
+    missing = "no",
+    label = list(
+      spiro_use ~ "Spirometry",
+      bdr_use ~ "Bronchodilator response",
+      feno_use ~ "FeNO"
+    )
+  ) %>%
+  bold_labels()
+
+first_line_table
+```
+
+# 7. Barriers to first-line testing among primary care paediatricians
+
+```{r}
+pcp_data <- data2 %>%
+  filter(primary_ped_spe_other == "Primary care paediatricians")
+
+summarise_checkbox_reasons <- function(df, prefix, labels) {
+  denominator <- n_distinct(df$record_id)
+
+  df %>%
+    mutate(across(starts_with(prefix), as.character)) %>%
+    pivot_longer(
+      cols = starts_with(prefix),
+      names_to = "reason",
+      values_to = "selected"
+    ) %>%
+    filter(selected == "1") %>%
+    mutate(
+      reason_code = stringr::str_remove(reason, fixed(prefix)),
+      reason = recode(reason_code, !!!labels)
+    ) %>%
+    count(reason, sort = TRUE) %>%
+    mutate(percentage = 100 * n / denominator)
+}
+
+reason_labels <- c(
+  "1" = "No need for the test",
+  "2" = "Not enough staff",
+  "3" = "Not enough time",
+  "4" = "Difficult cooperation with school children",
+  "5" = "Parents reject the test",
+  "6" = "Results are difficult to interpret in children",
+  "7" = "Poor reimbursement by insurance",
+  "8" = "Device is too expensive",
+  "9" = "Other reason"
+)
+
+spirometry_barriers <- pcp_data %>%
+  filter(phyq_q7_spiro == 0) %>%
+  summarise_checkbox_reasons(
+    prefix = "phyq_q7_nospiro___",
+    labels = reason_labels
+  )
+
+feno_barriers <- pcp_data %>%
+  filter(phyq_11_feno == 0) %>%
+  summarise_checkbox_reasons(
+    prefix = "phyq_11_1_feno_whyno___",
+    labels = reason_labels
+  )
+
+spirometry_barriers
+feno_barriers
+```
+
+# 8. Referral practices among primary care paediatricians
+
+The following analyses are restricted to primary care paediatricians. All percentages and comparisons are calculated directly from the analytical dataset. 
+
+## 8.1 Referral frequency and destination
+
+```{r}
+referral_summary <- pcp_data %>%
+  select(
+    `Referral destination` = phyq_26_1_ref_where.factor,
+    `Referral frequency` = phyq_26_per_ref.factor
+  ) %>%
+  tbl_summary(
+    type = all_categorical() ~ "categorical",
+    statistic = all_categorical() ~ "{n} ({p}%)",
+    missing = "no"
+  ) %>%
+  modify_caption(
+    "**Referral destination and frequency among primary care paediatricians**"
+  ) %>%
+  bold_labels()
+
+referral_summary
+```
+
+## 8.2 Reasons for referral
+
+```{r}
+referral_reason_labels <- c(
+  "1" = "Confirm asthma diagnosis / rule out differentials",
+  "2" = "Perform unavailable tests",
+  "3" = "Severe or uncontrolled symptoms",
+  "4" = "Children with comorbidities",
+  "5" = "Complex social/family situation",
+  "6" = "Intensify therapy",
+  "7" = "Reduce or discontinue therapy",
+  "8" = "Problems with compliance/adherence",
+  "9" = "At family's request",
+  "10" = "Other"
+)
+
+referral_reasons <- pcp_data %>%
+  summarise_checkbox_reasons(
+    prefix = "phyq_26_2_reason_ref___",
+    labels = referral_reason_labels
+  )
+
+referral_reasons
+```
+
+## 8.3 Referral practices according to spirometry access
+
+```{r}
+pcp_referral <- pcp_data %>%
+  mutate(
+    spirometry_access = factor(
+      phyq_q7_spiro,
+      levels = c(1, 0),
+      labels = c("Access to spirometry", "No access to spirometry")
+    )
+  )
+
+referral_by_spiro <- pcp_referral %>%
+  select(
+    spirometry_access,
+    `Referral destination` = phyq_26_1_ref_where.factor,
+    `Referral frequency` = phyq_26_per_ref.factor
+  ) %>%
+  tbl_summary(
+    by = spirometry_access,
+    type = all_categorical() ~ "categorical",
+    statistic = all_categorical() ~ "{n} ({p}%)",
+    missing = "no"
+  ) %>%
+  add_p(
+    test = list(
+      `Referral destination` ~ "chisq.test",
+      `Referral frequency` ~ "chisq.test"
+    )
+  ) %>%
+  modify_header(label = "**Characteristic**") %>%
+  modify_caption(
+    "**Referral practices according to access to spirometry**"
+  ) %>%
+  bold_labels()
+
+referral_by_spiro
+```
+
+## 8.4 Reasons for referral according to spirometry access
+
+```{r}
+referral_reasons_by_spiro <- pcp_referral %>%
+  mutate(across(starts_with("phyq_26_2_reason_ref___"), as.character)) %>%
+  pivot_longer(
+    cols = starts_with("phyq_26_2_reason_ref___"),
+    names_to = "reason",
+    values_to = "selected"
+  ) %>%
+  mutate(
+    reason_code = stringr::str_remove(
+      reason,
+      fixed("phyq_26_2_reason_ref___")
+    ),
+    reason = recode(reason_code, !!!referral_reason_labels),
+    selected = selected == "1"
+  )
+
+# Number of PCPs in each spirometry-access group
+group_denominators <- pcp_referral %>%
+  filter(!is.na(spirometry_access)) %>%
+  count(spirometry_access, name = "denominator")
+
+# Counts and percentages for each referral reason
+referral_reason_comparison <- referral_reasons_by_spiro %>%
+  filter(selected, !is.na(spirometry_access)) %>%
+  count(reason, spirometry_access, name = "n") %>%
+  complete(
+    reason,
+    spirometry_access,
+    fill = list(n = 0)
+  ) %>%
+  left_join(group_denominators, by = "spirometry_access") %>%
+  mutate(percentage = 100 * n / denominator)
+
+referral_reason_comparison
+
+# Chi-square or Fisher's exact test for each referral reason
+referral_reason_tests <- referral_reasons_by_spiro %>%
+  filter(!is.na(spirometry_access)) %>%
+  group_by(reason) %>%
+  group_modify(~ {
+    tab <- table(.x$spirometry_access, .x$selected)
+
+    if (nrow(tab) < 2 || ncol(tab) < 2) {
+      return(tibble(p_value = NA_real_, test = NA_character_))
+    }
+
+    expected <- suppressWarnings(chisq.test(tab)$expected)
+
+    if (any(expected < 5)) {
+      tibble(
+        p_value = fisher.test(tab)$p.value,
+        test = "Fisher's exact test"
+      )
+    } else {
+      tibble(
+        p_value = chisq.test(tab, correct = FALSE)$p.value,
+        test = "Chi-square test"
+      )
+    }
+  }) %>%
+  ungroup()
+
+referral_reason_tests
+```
+
+# 9. Guideline consultation
+
+```{r}
+guideline_table <- data2 %>%
+  select(
+    primary_ped_spe_other,
+    swiss_2024,
+    ers_2021,
+    gina_2023
+  ) %>%
+  tbl_summary(
+    by = primary_ped_spe_other,
+    type = all_dichotomous() ~ "categorical",
+    statistic = all_categorical() ~ "{n} ({p}%)",
+    missing = "no",
+    label = list(
+      swiss_2024 ~ "Swiss 2024 guideline",
+      ers_2021 ~ "ERS 2021 guideline",
+      gina_2023 ~ "GINA guideline"
+    )
+  ) %>%
+  bold_labels()
+
+guideline_table
+```
+
+# 10. Factors associated with spirometry access among primary care paediatricians
+
+```{r}
+data_pc <- data2 %>%
+  filter(primary_ped_spe_other == "Primary care paediatricians") %>%
+  mutate(
+    # Verify against the final manuscript analysis before public release.
+    spirometry_access = as.numeric(phyq_q7_spiro == 1),
+    language_binary = case_when(
+      phyq_28_lang.factor == "Deutsch" ~ "German region",
+      phyq_28_lang.factor %in% c("Französisch", "Italienisch") ~ "French/Italian region",
+      TRUE ~ NA_character_
+    ),
+    gender_group = case_when(
+      phyq_29_gender.factor == "Männlich" ~ "Male",
+      phyq_29_gender.factor == "Weiblich" ~ "Female",
+      TRUE ~ NA_character_
+    ),
+    children_per_month_grouped = case_when(
+      children_per_month == "1–5 children/month" ~ "1–5 children/month",
+      children_per_month %in% c(
+        "6–14 children/month",
+        "15–29 children/month",
+        "≥30 children/month"
+      ) ~ ">6 children/month",
+      TRUE ~ NA_character_
+    ),
+    new_asthma_grouped = case_when(
+      new_asthma == "None" ~ "None",
+      new_asthma %in% c("1–3/month", "4–9/month", "≥10/month") ~ "≥1/month",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(
+    !is.na(language_binary),
+    !is.na(gender_group),
+    !is.na(age_group_comb30),
+    age_group_comb30 != "Prefer not to say"
+  ) %>%
+  mutate(
+    language_binary = relevel(factor(language_binary), ref = "German region"),
+    gender_group = relevel(factor(gender_group), ref = "Female"),
+    age_group_comb30 = relevel(factor(age_group_comb30), ref = "Under 40 years"),
+    clinical_time_group = relevel(factor(clinical_time_group), ref = "Part-time"),
+    children_per_month_grouped = relevel(
+      factor(children_per_month_grouped),
+      ref = "1–5 children/month"
+    ),
+    new_asthma_grouped = relevel(factor(new_asthma_grouped), ref = "None"),
+    swiss_2024 = relevel(factor(swiss_2024), ref = "No"),
+    ers_2021 = relevel(factor(ers_2021), ref = "No"),
+    gina_2023 = relevel(factor(gina_2023), ref = "No")
+  )
+```
+
+## 10.1 Univariable analyses
+
+```{r}
+predictors <- c(
+  "language_binary",
+  "gender_group",
+  "age_group_comb30",
+  "clinical_time_group",
+  "children_per_month_grouped",
+  "new_asthma_grouped",
+  "swiss_2024",
+  "ers_2021",
+  "gina_2023"
+)
+
+results_univariable <- map_dfr(
+  predictors,
+  function(v) {
+    glm(
+      reformulate(v, response = "spirometry_access"),
+      data = data_pc,
+      family = binomial
+    ) %>%
+      broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
+      filter(term != "(Intercept)") %>%
+      mutate(variable = v)
+  }
+)
+
+results_univariable
+```
+
+## 10.2 Multivariable analysis
+
+```{r}
+model_spiro <- glm(
+  spirometry_access ~
+    language_binary +
+    gender_group +
+    age_group_comb30 +
+    clinical_time_group +
+    children_per_month_grouped +
+    new_asthma_grouped +
+    swiss_2024 +
+    ers_2021 +
+    gina_2023,
+  data = data_pc,
+  family = binomial
+)
+
+results_multivariable <- broom::tidy(
+  model_spiro,
+  exponentiate = TRUE,
+  conf.int = TRUE
+) %>%
+  filter(term != "(Intercept)")
+
+results_multivariable
+```
+
+## 10.3 Regression table
+
+```{r}
+tbl_regression_spiro <- tbl_regression(
+  model_spiro,
+  exponentiate = TRUE,
+  label = list(
+    language_binary ~ "Language region",
+    gender_group ~ "Gender",
+    age_group_comb30 ~ "Age group",
+    clinical_time_group ~ "Clinical workload",
+    children_per_month_grouped ~ "Children with asthma seen per month",
+    new_asthma_grouped ~ "New asthma diagnoses per month",
+    swiss_2024 ~ "Swiss 2024 guideline consultation",
+    ers_2021 ~ "ERS 2021 guideline consultation",
+    gina_2023 ~ "GINA guideline consultation"
+  )
+)
+
+tbl_regression_spiro
+```
+
+# 11. Reproducibility information
+
+```{r}
+sessionInfo()
+```
